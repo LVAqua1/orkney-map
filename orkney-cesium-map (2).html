@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Orkney Archipelago — Interactive 3D Map</title>
+
+  <!-- CesiumJS -->
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;500;700&display=swap" rel="stylesheet">
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #070d14;
+      --surface:  #0d1a26;
+      --surface2: #152235;
+      --border:   rgba(255,255,255,0.07);
+      --border2:  rgba(255,255,255,0.13);
+      --text:     #dde6f0;
+      --muted:    #5a7a90;
+      --faint:    #2a4a60;
+      --ocean:    #1a8aaa;
+      --teal:     #2ab89a;
+      --amber:    #e8a030;
+      --coral:    #e05848;
+      --sky:      #5ab8f0;
+      --green:    #3cba6a;
+    }
+
+    html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
+
+    /* Hide Cesium credits bar */
+    .cesium-widget-credits { display: none !important; }
+    .cesium-viewer-bottom { display: none !important; }
+
+    #cesium-container {
+      position: absolute;
+      inset: 0;
+    }
+
+    /* ── Header ── */
+    #header {
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 52px;
+      background: rgba(7,13,20,0.92);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 18px;
+      z-index: 100;
+      backdrop-filter: blur(12px);
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo-mark {
+      width: 30px; height: 30px;
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      border-radius: 7px;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .logo-text { font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 700; color: var(--text); }
+    .logo-sub  { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); letter-spacing: 0.08em; margin-top: 1px; }
+
+    .header-tags { display: flex; gap: 6px; }
+    .tag {
+      font-family: 'DM Mono', monospace; font-size: 10px;
+      padding: 3px 9px; border-radius: 20px; border: 1px solid;
+      letter-spacing: 0.04em;
+    }
+    .tag-terrain { background: rgba(60,186,106,0.1);  color: var(--green); border-color: rgba(60,186,106,0.3); }
+    .tag-seabed  { background: rgba(90,184,240,0.1);  color: var(--sky);   border-color: rgba(90,184,240,0.3); }
+    .tag-live    { background: rgba(232,160,48,0.1);  color: var(--amber); border-color: rgba(232,160,48,0.3); }
+
+    .header-actions { display: flex; gap: 8px; }
+    .btn {
+      font-family: 'Syne', sans-serif; font-size: 12px;
+      padding: 6px 14px; border-radius: 6px; cursor: pointer;
+      border: 1px solid var(--border2); background: transparent;
+      color: var(--muted); transition: all .15s;
+    }
+    .btn:hover { color: var(--text); border-color: rgba(255,255,255,0.3); }
+    .btn-primary {
+      background: var(--ocean); border-color: var(--ocean);
+      color: #fff;
+    }
+    .btn-primary:hover { background: #1a9abf; }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      position: absolute;
+      top: 52px; left: 0; bottom: 30px;
+      width: 268px;
+      background: rgba(7,13,20,0.90);
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      overflow-y: auto;
+      z-index: 100;
+      backdrop-filter: blur(12px);
+      transition: transform .3s ease;
+    }
+
+    #sidebar.hidden { transform: translateX(-268px); }
+
+    #sidebar::-webkit-scrollbar { width: 3px; }
+    #sidebar::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+    .panel { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+
+    .panel-title {
+      font-family: 'DM Mono', monospace; font-size: 9px;
+      font-weight: 500; letter-spacing: 0.12em;
+      color: var(--muted); text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    .group-label {
+      font-family: 'DM Mono', monospace; font-size: 9px;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      padding: 8px 0 5px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .group-label::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+    /* Layer rows */
+    .layer {
+      display: flex; align-items: center;
+      justify-content: space-between;
+      padding: 7px 0; border-bottom: 1px solid var(--border);
+      cursor: pointer; user-select: none;
+    }
+    .layer:last-child { border-bottom: none; }
+    .layer-left { display: flex; align-items: center; gap: 9px; }
+    .layer-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; transition: opacity .2s; }
+    .layer:not(.active) .layer-dot { opacity: 0.2; }
+    .layer-name { font-family: 'Syne', sans-serif; font-size: 12px; color: var(--text); transition: color .15s; }
+    .layer-sub  { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); margin-top: 1px; }
+    .layer:not(.active) .layer-name { color: var(--faint); }
+
+    /* Toggle */
+    .tog { position: relative; width: 28px; height: 16px; flex-shrink: 0; }
+    .tog input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .tog-track { position: absolute; inset: 0; background: var(--surface2); border: 1px solid var(--border2); border-radius: 8px; transition: background .2s; cursor: pointer; }
+    .tog-thumb { position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; background: var(--muted); border-radius: 50%; transition: transform .2s, background .2s; }
+    .tog input:checked + .tog-track { background: var(--ocean); border-color: var(--ocean); }
+    .tog input:checked ~ .tog-thumb { transform: translateX(12px); background: #fff; }
+
+    /* Location list */
+    .loc-item {
+      padding: 8px 0; border-bottom: 1px solid var(--border);
+      cursor: pointer; display: flex; align-items: center; gap: 10px;
+    }
+    .loc-item:last-child { border-bottom: none; }
+    .loc-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .loc-name { font-family: 'Syne', sans-serif; font-size: 12px; color: var(--text); flex: 1; }
+    .loc-depth { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); }
+
+    /* Depth scale */
+    .depth-scale { display: flex; align-items: stretch; gap: 10px; height: 110px; padding: 4px 0; }
+    .depth-bar { width: 12px; border-radius: 3px; background: linear-gradient(to bottom, #1a8a9a, #0d4a6e 50%, #020c18); flex-shrink: 0; }
+    .depth-labels { display: flex; flex-direction: column; justify-content: space-between; flex: 1; }
+    .depth-label { display: flex; justify-content: space-between; font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); }
+    .depth-val { color: var(--sky); }
+
+    /* Info card */
+    .info-card { background: var(--surface2); border: 1px solid var(--border2); border-radius: 8px; padding: 11px; }
+    .info-name { font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 500; color: var(--text); margin-bottom: 4px; }
+    .info-desc { font-family: 'Syne', sans-serif; font-size: 11px; color: var(--muted); line-height: 1.6; margin-bottom: 8px; }
+    .info-row { display: flex; justify-content: space-between; padding: 4px 0; border-top: 1px solid var(--border); }
+    .info-label { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); }
+    .info-value { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--sky); }
+
+    /* View controls */
+    .view-btn {
+      width: 100%; text-align: left;
+      font-family: 'Syne', sans-serif; font-size: 12px;
+      padding: 8px 10px; border-radius: 6px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--surface2);
+      color: var(--muted); margin-bottom: 5px; transition: all .15s;
+    }
+    .view-btn:hover { color: var(--text); border-color: var(--border2); }
+    .view-btn:last-child { margin-bottom: 0; }
+
+    /* ── Bottom bar ── */
+    #bottombar {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 30px;
+      background: rgba(7,13,20,0.92);
+      border-top: 1px solid var(--border);
+      display: flex; align-items: center;
+      padding: 0 16px; gap: 18px;
+      z-index: 100;
+      backdrop-filter: blur(12px);
+    }
+    .bbar-item { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+    .bbar-dot { width: 5px; height: 5px; border-radius: 50%; }
+
+    /* ── Coord overlay ── */
+    #coord-overlay {
+      position: absolute;
+      bottom: 40px; right: 14px;
+      background: rgba(7,13,20,0.85);
+      border: 1px solid var(--border2);
+      border-radius: 8px; padding: 10px 14px;
+      z-index: 100;
+      backdrop-filter: blur(8px);
+      pointer-events: none;
+    }
+    .coord-label { font-family: 'DM Mono', monospace; font-size: 9px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+    .coord-value { font-family: 'DM Mono', monospace; font-size: 13px; font-weight: 500; color: var(--sky); margin-top: 2px; }
+
+    /* Sidebar toggle button */
+    #sidebar-toggle {
+      position: absolute;
+      top: 62px; left: 278px;
+      width: 24px; height: 48px;
+      background: rgba(7,13,20,0.9);
+      border: 1px solid var(--border2);
+      border-left: none;
+      border-radius: 0 6px 6px 0;
+      cursor: pointer; z-index: 101;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--muted); font-size: 10px;
+      transition: left .3s;
+    }
+    #sidebar-toggle.collapsed { left: 10px; }
+
+    /* Token notice */
+    #token-notice {
+      position: absolute;
+      top: 62px; left: 50%; transform: translateX(-50%);
+      background: rgba(232,160,48,0.15);
+      border: 1px solid rgba(232,160,48,0.4);
+      border-radius: 8px; padding: 12px 20px;
+      z-index: 200; text-align: center;
+      max-width: 480px;
+    }
+    #token-notice h3 { font-family: 'Syne', sans-serif; font-size: 14px; color: var(--amber); margin-bottom: 6px; }
+    #token-notice p  { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--muted); line-height: 1.6; }
+    #token-notice a  { color: var(--sky); text-decoration: none; }
+    #token-input { width: 100%; margin-top: 10px; background: var(--surface2); border: 1px solid var(--border2); border-radius: 6px; padding: 8px 12px; color: var(--text); font-family: 'DM Mono', monospace; font-size: 12px; }
+    #token-btn { margin-top: 8px; width: 100%; padding: 8px; background: var(--ocean); border: none; border-radius: 6px; color: #fff; font-family: 'Syne', sans-serif; font-size: 13px; cursor: pointer; }
+  </style>
+</head>
+<body>
+
+<!-- ── CESIUM MAP ── -->
+<div id="cesium-container"></div>
+
+<!-- ── HEADER ── -->
+<div id="header">
+  <div class="logo">
+    <div class="logo-mark">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <circle cx="8" cy="8" r="6" stroke="#5ab8f0" stroke-width="1" fill="none" opacity=".5"/>
+        <path d="M8 3Q11 5.5 11 8Q11 11 8 13Q5 11 5 8Q5 5.5 8 3Z" stroke="#5ab8f0" stroke-width=".8" fill="none"/>
+        <line x1="3" y1="8" x2="13" y2="8" stroke="#5ab8f0" stroke-width=".8"/>
+      </svg>
+    </div>
+    <div>
+      <div class="logo-text">Orkney Archipelago</div>
+      <div class="logo-sub">Interactive 3D · Land + Seabed</div>
+    </div>
+  </div>
+  <div class="header-tags">
+    <span class="tag tag-terrain">Cesium World Terrain</span>
+    <span class="tag tag-seabed">UKHO Bathymetry</span>
+    <span class="tag tag-live">Live 3D</span>
+  </div>
+  <div class="header-actions">
+    <button class="btn" onclick="resetToScapaFlow()">Scapa Flow</button>
+    <button class="btn" onclick="resetToOrkney()">Full Orkney</button>
+    <button class="btn btn-primary" onclick="toggleUnderwater()">Dive under ↓</button>
+  </div>
+</div>
+
+<!-- ── SIDEBAR TOGGLE ── -->
+<button id="sidebar-toggle" onclick="toggleSidebar()">‹</button>
+
+<!-- ── SIDEBAR ── -->
+<aside id="sidebar">
+
+  <!-- View presets -->
+  <div class="panel">
+    <div class="panel-title">Quick views</div>
+    <button class="view-btn" onclick="flyTo(58.89, -3.05, 8000, -45)">🌊 Scapa Flow basin</button>
+    <button class="view-btn" onclick="flyTo(58.873, -3.408, 3000, -30)">⛰ Old Man of Hoy</button>
+    <button class="view-btn" onclick="flyTo(58.89, -3.05, 400, -10)">🤿 Underwater view</button>
+    <button class="view-btn" onclick="flyTo(58.98, -2.96, 5000, -50)">🏛 Kirkwall</button>
+    <button class="view-btn" onclick="flyTo(59.001, -3.229, 2000, -45)">🗿 Ring of Brodgar</button>
+    <button class="view-btn" onclick="resetToOrkney()">🗺 Full archipelago</button>
+  </div>
+
+  <!-- Data layers -->
+  <div class="panel">
+    <div class="panel-title">Data layers</div>
+
+    <div class="group-label" style="color:var(--sky)">Seabed</div>
+
+    <div class="layer active" id="layer-depth" onclick="toggleLayer('depth')">
+      <div class="layer-left">
+        <div class="layer-dot" style="background:var(--sky)"></div>
+        <div>
+          <div class="layer-name">Depth shading</div>
+          <div class="layer-sub">UKHO bathymetry</div>
+        </div>
+      </div>
+      <label class="tog" onclick="event.stopPropagation()">
+        <input type="checkbox" id="chk-depth" checked onchange="toggleLayer('depth')">
+        <span class="tog-track"></span><span class="tog-thumb"></span>
+      </label>
+    </div>
+
+    <div class="layer active" id="layer-wrecks" onclick="toggleLayer('wrecks')">
+      <div class="layer-left">
+        <div class="layer-dot" style="background:var(--coral)"></div>
+        <div>
+          <div class="layer-name">Scapa Flow wrecks</div>
+          <div class="layer-sub">7 WWI German fleet</div>
+        </div>
+      </div>
+      <label class="tog" onclick="event.stopPropagation()">
+        <input type="checkbox" id="chk-wrecks" checked onchange="toggleLayer('wrecks')">
+        <span class="tog-track"></span><span class="tog-thumb"></span>
+      </label>
+    </div>
+
+    <div class="layer" id="layer-tidal" onclick="toggleLayer('tidal')">
+      <div class="layer-left">
+        <div class="layer-dot" style="background:var(--amber)"></div>
+        <div>
+          <div class="layer-name">Tidal energy sites</div>
+          <div class="layer-sub">EMEC · MeyGen</div>
+        </div>
+      </div>
+      <label class="tog" onclick="event.stopPropagation()">
+        <input type="checkbox" id="chk-tidal" onchange="toggleLayer('tidal')">
+        <span class="tog-track"></span><span class="tog-thumb"></span>
+      </label>
+    </div>
+
+    <div class="group-label" style="color:var(--green); margin-top:6px">Land</div>
+
+    <div class="layer" id="layer-heritage" onclick="toggleLayer('heritage')">
+      <div class="layer-left">
+        <div class="layer-dot" style="background:var(--coral)"></div>
+        <div>
+          <div class="layer-name">Archaeological sites</div>
+          <div class="layer-sub">UNESCO World Heritage</div>
+        </div>
+      </div>
+      <label class="tog" onclick="event.stopPropagation()">
+        <input type="checkbox" id="chk-heritage" onchange="toggleLayer('heritage')">
+        <span class="tog-track"></span><span class="tog-thumb"></span>
+      </label>
+    </div>
+
+    <div class="layer" id="layer-ferry" onclick="toggleLayer('ferry')">
+      <div class="layer-left">
+        <div class="layer-dot" style="background:var(--teal)"></div>
+        <div>
+          <div class="layer-name">Ferry routes</div>
+          <div class="layer-sub">NorthLink · Pentland</div>
+        </div>
+      </div>
+      <label class="tog" onclick="event.stopPropagation()">
+        <input type="checkbox" id="chk-ferry" onchange="toggleLayer('ferry')">
+        <span class="tog-track"></span><span class="tog-thumb"></span>
+      </label>
+    </div>
+  </div>
+
+  <!-- Depth scale -->
+  <div class="panel">
+    <div class="panel-title">Scapa Flow depth</div>
+    <div class="depth-scale">
+      <div class="depth-bar"></div>
+      <div class="depth-labels">
+        <div class="depth-label"><span>Sea surface</span><span class="depth-val">0 m</span></div>
+        <div class="depth-label"><span>Wreck sites</span><span class="depth-val">−35 m</span></div>
+        <div class="depth-label"><span>Main channel</span><span class="depth-val">−50 m</span></div>
+        <div class="depth-label"><span>Deepest</span><span class="depth-val">−65 m</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Selected location -->
+  <div class="panel">
+    <div class="panel-title">Selected location</div>
+    <div class="info-card">
+      <div class="info-name" id="info-name">Scapa Flow</div>
+      <div class="info-desc" id="info-desc">Historic sheltered anchorage. Site of the German High Seas Fleet scuttling in 1919. Seven major wrecks remain, making it one of the world's top wreck dive sites.</div>
+      <div class="info-row"><span class="info-label">Depth</span><span class="info-value" id="info-depth">−20 to −65 m</span></div>
+      <div class="info-row"><span class="info-label">Area</span><span class="info-value" id="info-area">324 km²</span></div>
+      <div class="info-row"><span class="info-label">Category</span><span class="info-value" id="info-cat">Maritime history</span></div>
+    </div>
+  </div>
+
+  <!-- Key locations -->
+  <div class="panel">
+    <div class="panel-title">Locations</div>
+    <div id="loc-list"></div>
+  </div>
+
+</aside>
+
+<!-- ── COORD OVERLAY ── -->
+<div id="coord-overlay">
+  <div class="coord-label">Camera position</div>
+  <div class="coord-value" id="coord-lat">58.9000°N</div>
+  <div class="coord-value" id="coord-lon">3.0500°W</div>
+  <div class="coord-value" id="coord-alt" style="color:var(--muted);font-size:11px;margin-top:2px">8,000 m alt</div>
+</div>
+
+<!-- ── BOTTOM BAR ── */
+<div id="bottombar">
+  <div class="bbar-item"><div class="bbar-dot" style="background:var(--green)"></div>Cesium World Terrain</div>
+  <div class="bbar-item"><div class="bbar-dot" style="background:var(--sky)"></div>UKHO Bathymetry</div>
+  <div class="bbar-item"><div class="bbar-dot" style="background:var(--amber)"></div>Real elevation · No exaggeration needed</div>
+  <div class="bbar-item" style="margin-left:auto">
+    <span id="active-count">2</span> layers active
+  </div>
+</div>
+
+<!-- ── CESIUM TOKEN NOTICE ── -->
+<div id="token-notice">
+  <h3>⚡ Free Cesium ion Token Required</h3>
+  <p>
+    This map uses <strong>Cesium World Terrain</strong> — real 3D elevation data for the entire planet including Orkney's seabed.<br><br>
+    Get a free token at <a href="https://cesium.com/ion/signup" target="_blank">cesium.com/ion/signup</a> (takes 2 minutes, no credit card).<br>
+    Then paste your <strong>Default Access Token</strong> below:
+  </p>
+  <input type="text" id="token-input" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...">
+  <button id="token-btn" onclick="initWithToken()">Launch Orkney 3D Map →</button>
+</div>
+
+<script>
+// ── Location data ──
+const locations = [
+  { name:'Scapa Flow',          lat:58.890, lon:-3.050, depth:'−20–65 m', area:'324 km²',   cat:'Maritime history', desc:'Historic sheltered anchorage. Site of the 1919 German fleet scuttling. Seven major WWI wrecks remain on the seabed.', dot:'#e05848', alt:6000, pitch:-40 },
+  { name:'EMEC — Fall of Warness', lat:59.148, lon:-2.792, depth:'−40 m',   area:'Test site', cat:'Tidal energy',    desc:'World\'s leading tidal energy test site. Tidal streams reach 4m/s. Multiple full-scale turbine deployments.', dot:'#e8a030', alt:4000, pitch:-45 },
+  { name:'Ring of Brodgar',     lat:59.001, lon:-3.229, depth:'+24 m',   area:'104 stones', cat:'UNESCO Heritage',  desc:'Neolithic stone circle c.2500 BC. 27 of the original 104 stones survive. Part of the Heart of Neolithic Orkney UNESCO WHS.', dot:'#e05848', alt:1500, pitch:-50 },
+  { name:'Skara Brae',          lat:59.049, lon:-3.343, depth:'+7 m',    area:'6 houses',   cat:'UNESCO Heritage',  desc:'Best preserved Neolithic village in Northern Europe. Occupied 3180–2500 BC. Revealed by a storm in 1850.', dot:'#e05848', alt:1000, pitch:-45 },
+  { name:'MeyGen tidal array',  lat:58.620, lon:-3.150, depth:'−30 m',   area:'6 MW Ph.1',  cat:'Tidal energy',    desc:'World\'s largest tidal stream array. Inner Sound of the Pentland Firth. Phase 1A: four turbines generating 6MW.', dot:'#e8a030', alt:5000, pitch:-40 },
+  { name:'Old Man of Hoy',      lat:58.873, lon:-3.408, depth:'+137 m',  area:'137m stack', cat:'Landmark',        desc:'137m sandstone sea stack — one of the tallest in the UK. First climbed in 1966. Visible from the Scrabster ferry.', dot:'#2ab89a', alt:3000, pitch:-35 },
+  { name:'Churchill Barriers',  lat:58.880, lon:-2.920, depth:'0 m',     area:'4 causeways',cat:'WWII History',    desc:'Four causeways built 1940–1945 to protect Scapa Flow. Italian POWs built the famous Italian Chapel on Lamb Holm.', dot:'#2ab89a', alt:4000, pitch:-45 },
+  { name:'Kirkwall',            lat:58.981, lon:-2.960, depth:'+10 m',   area:'Pop. 9,000', cat:'Capital',         desc:'Capital of Orkney. Home to St Magnus Cathedral (1137). Main ferry terminal and airport connections.', dot:'#3cba6a', alt:3000, pitch:-50 },
+];
+
+// ── Cesium setup ──
+let viewer, wrecksDataSource, tidalDataSource, heritageDataSource, ferryDataSource;
+let sidebarOpen = true;
+let underwaterMode = false;
+
+const layerStates = { depth:true, wrecks:true, tidal:false, heritage:false, ferry:false };
+
+function initWithToken() {
+  const token = document.getElementById('token-input').value.trim();
+  if (!token) { alert('Please paste your Cesium ion token'); return; }
+  localStorage.setItem('cesium_token', token);
+  document.getElementById('token-notice').style.display = 'none';
+  initCesium(token);
+}
+
+function initCesium(token) {
+  Cesium.Ion.defaultAccessToken = token;
+
+  viewer = new Cesium.Viewer('cesium-container', {
+    terrain: Cesium.Terrain.fromWorldTerrain({
+      requestWaterMask: true,
+      requestVertexNormals: true
+    }),
+    // imagery added after init
+    baseLayerPicker: false,
+    navigationHelpButton: false,
+    homeButton: false,
+    sceneModePicker: false,
+    geocoder: false,
+    fullscreenButton: false,
+    timeline: false,
+    animation: false,
+    infoBox: true,
+    selectionIndicator: true,
+  });
+
+  // Enable underground viewing
+  viewer.scene.screenSpaceCameraController.enableCollisionDetection = false;
+  viewer.scene.globe.depthTestAgainstTerrain = true;
+
+  // Water appearance
+  viewer.scene.globe.showWaterEffect = true;
+
+  // Remove default imagery and add Bing Aerial
+  viewer.imageryLayers.removeAll();
+  viewer.imageryLayers.addImageryProvider(new Cesium.IonImageryProvider({ assetId: 2 }));
+
+  // Fly to Scapa Flow on load
+  setTimeout(() => resetToScapaFlow(), 500);
+
+  // Add data layers
+  addWrecks();
+  addTidalSites();
+  addHeritageSites();
+  addFerryRoutes();
+
+  // Camera position tracker
+  viewer.scene.postRender.addEventListener(() => {
+    const pos = viewer.camera.positionCartographic;
+    if (pos) {
+      const lat = Cesium.Math.toDegrees(pos.latitude);
+      const lon = Cesium.Math.toDegrees(pos.longitude);
+      const alt = pos.height;
+      document.getElementById('coord-lat').textContent = Math.abs(lat).toFixed(4) + '°' + (lat >= 0 ? 'N' : 'S');
+      document.getElementById('coord-lon').textContent = Math.abs(lon).toFixed(4) + '°' + (lon >= 0 ? 'E' : 'W');
+      document.getElementById('coord-alt').textContent = alt > 1000 ? (alt/1000).toFixed(1) + ' km alt' : Math.round(alt) + ' m alt';
+    }
+  });
+}
+
+// ── Fly functions ──
+function flyTo(lat, lon, alt, pitch) {
+  if (!viewer) return;
+  viewer.camera.flyTo({
+    destination: Cesium.Cartesian3.fromDegrees(lon, lat, alt),
+    orientation: {
+      heading: Cesium.Math.toRadians(0),
+      pitch: Cesium.Math.toRadians(pitch),
+      roll: 0
+    },
+    duration: 2.5
+  });
+}
+
+function resetToScapaFlow() {
+  flyTo(58.90, -3.05, 8000, -40);
+}
+
+function resetToOrkney() {
+  flyTo(59.00, -3.00, 45000, -35);
+}
+
+function toggleUnderwater() {
+  underwaterMode = !underwaterMode;
+  const btn = document.querySelector('.btn-primary');
+  if (underwaterMode) {
+    // Dive below water surface into Scapa Flow
+    viewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(-3.05, 58.89, -20),
+      orientation: {
+        heading: Cesium.Math.toRadians(45),
+        pitch: Cesium.Math.toRadians(5),
+        roll: 0
+      },
+      duration: 3
+    });
+    btn.textContent = 'Surface ↑';
+  } else {
+    resetToScapaFlow();
+    btn.textContent = 'Dive under ↓';
+  }
+}
+
+// ── Data layers ──
+function addWrecks() {
+  const wrecks = [
+    { name:'SMS König',       lat:58.8765, lon:-3.0821, depth:'-36m', desc:'German battleship, scuttled 21 June 1919. Now lying on its side. Popular wreck dive.' },
+    { name:'SMS Markgraf',    lat:58.8823, lon:-3.0654, depth:'-45m', desc:'German battleship. Deepest of the Scapa Flow battleships at 45m.' },
+    { name:'SMS Kronprinz Wilhelm', lat:58.8912, lon:-3.0432, depth:'-35m', desc:'German battleship. Lies upside down. Largely intact.' },
+    { name:'SMS Dresden',     lat:58.8634, lon:-3.0123, depth:'-36m', desc:'German light cruiser. Lying on its starboard side.' },
+    { name:'SMS Brummer',     lat:58.8745, lon:-3.0234, depth:'-34m', desc:'German light cruiser. One of the most intact wrecks in Scapa Flow.' },
+    { name:'SMS Cöln',        lat:58.8956, lon:-3.0876, depth:'-36m', desc:'German light cruiser. Lies upside down.' },
+    { name:'SMS Karlsruhe',   lat:58.8867, lon:-3.0543, depth:'-26m', desc:'German light cruiser. Shallowest of the main wrecks.' },
+  ];
+
+  wrecksDataSource = new Cesium.CustomDataSource('wrecks');
+  wrecks.forEach(w => {
+    wrecksDataSource.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(w.lon, w.lat),
+      point: { pixelSize: 12, color: Cesium.Color.fromCssColorString('#e05848'), outlineColor: Cesium.Color.WHITE, outlineWidth: 2 },
+      label: {
+        text: w.name,
+        font: '12px Syne, sans-serif',
+        fillColor: Cesium.Color.WHITE,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 2,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        pixelOffset: new Cesium.Cartesian2(0, -16),
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 25000),
+      },
+      description: `<div style="font-family:sans-serif;padding:10px"><h3 style="color:#e05848">${w.name}</h3><p><strong>Depth:</strong> ${w.depth}</p><p style="margin-top:8px">${w.desc}</p></div>`
+    });
+  });
+  viewer.dataSources.add(wrecksDataSource);
+}
+
+function addTidalSites() {
+  const sites = [
+    { name:'EMEC — Fall of Warness', lat:59.148, lon:-2.792, desc:'World\'s leading tidal test site. 4m/s peak flow.', flow:'4.0 m/s' },
+    { name:'EMEC — Billia Croo',     lat:59.020, lon:-3.380, desc:'EMEC wave energy test site on the Atlantic coast.', flow:'Wave site' },
+    { name:'MeyGen — Inner Sound',   lat:58.620, lon:-3.150, desc:'World\'s largest tidal array. 6MW Phase 1A.', flow:'4.5 m/s' },
+  ];
+
+  tidalDataSource = new Cesium.CustomDataSource('tidal');
+  sites.forEach(s => {
+    tidalDataSource.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(s.lon, s.lat),
+      point: { pixelSize: 14, color: Cesium.Color.fromCssColorString('#e8a030'), outlineColor: Cesium.Color.WHITE, outlineWidth: 2 },
+      label: {
+        text: s.name,
+        font: '12px Syne, sans-serif',
+        fillColor: Cesium.Color.fromCssColorString('#e8a030'),
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 2,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        pixelOffset: new Cesium.Cartesian2(0, -16),
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 50000),
+      },
+      description: `<div style="font-family:sans-serif;padding:10px"><h3 style="color:#e8a030">${s.name}</h3><p><strong>Flow:</strong> ${s.flow}</p><p style="margin-top:8px">${s.desc}</p></div>`
+    });
+  });
+  tidalDataSource.show = false;
+  viewer.dataSources.add(tidalDataSource);
+}
+
+function addHeritageSites() {
+  const sites = [
+    { name:'Ring of Brodgar', lat:59.001, lon:-3.229, desc:'Neolithic stone circle c.2500 BC. UNESCO World Heritage Site.' },
+    { name:'Skara Brae',      lat:59.049, lon:-3.343, desc:'Best preserved Neolithic village in Northern Europe. UNESCO WHS.' },
+    { name:'Maeshowe',        lat:58.997, lon:-3.187, desc:'Neolithic chambered cairn. UNESCO WHS. Aligned to winter solstice.' },
+    { name:'Italian Chapel',  lat:58.897, lon:-2.978, desc:'WWII chapel built by Italian POWs from two Nissen huts.' },
+  ];
+
+  heritageDataSource = new Cesium.CustomDataSource('heritage');
+  sites.forEach(s => {
+    heritageDataSource.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(s.lon, s.lat),
+      point: { pixelSize: 10, color: Cesium.Color.fromCssColorString('#e05848'), outlineColor: Cesium.Color.WHITE, outlineWidth: 2 },
+      label: {
+        text: s.name,
+        font: '11px Syne, sans-serif',
+        fillColor: Cesium.Color.WHITE,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 2,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        pixelOffset: new Cesium.Cartesian2(0, -14),
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 30000),
+      },
+      description: `<div style="font-family:sans-serif;padding:10px"><h3>${s.name}</h3><p style="margin-top:8px">${s.desc}</p></div>`
+    });
+  });
+  heritageDataSource.show = false;
+  viewer.dataSources.add(heritageDataSource);
+}
+
+function addFerryRoutes() {
+  ferryDataSource = new Cesium.CustomDataSource('ferry');
+  
+  const routes = [
+    { name:'Stromness–Scrabster', points:[[-3.299,58.968],[-3.526,58.614]] },
+    { name:'Kirkwall–Aberdeen',   points:[[-2.960,58.981],[-2.092,57.145]] },
+  ];
+
+  routes.forEach(r => {
+    ferryDataSource.entities.add({
+      polyline: {
+        positions: Cesium.Cartesian3.fromDegreesArray(r.points.flat()),
+        width: 2,
+        material: new Cesium.PolylineDashMaterialProperty({
+          color: Cesium.Color.fromCssColorString('#2ab89a'),
+          dashLength: 16
+        }),
+      },
+      description: `<div style="font-family:sans-serif;padding:10px"><h3>${r.name}</h3><p>NorthLink Ferries route</p></div>`
+    });
+  });
+  ferryDataSource.show = false;
+  viewer.dataSources.add(ferryDataSource);
+}
+
+// ── Layer toggle ──
+function toggleLayer(name) {
+  layerStates[name] = !layerStates[name];
+  const el  = document.getElementById('layer-' + name);
+  const chk = document.getElementById('chk-' + name);
+  el.classList.toggle('active', layerStates[name]);
+  chk.checked = layerStates[name];
+
+  if (viewer) {
+    if (name === 'wrecks'   && wrecksDataSource)   wrecksDataSource.show   = layerStates[name];
+    if (name === 'tidal'    && tidalDataSource)     tidalDataSource.show    = layerStates[name];
+    if (name === 'heritage' && heritageDataSource)  heritageDataSource.show = layerStates[name];
+    if (name === 'ferry'    && ferryDataSource)     ferryDataSource.show    = layerStates[name];
+  }
+
+  document.getElementById('active-count').textContent =
+    Object.values(layerStates).filter(Boolean).length;
+}
+
+// ── Sidebar toggle ──
+function toggleSidebar() {
+  sidebarOpen = !sidebarOpen;
+  const sb  = document.getElementById('sidebar');
+  const btn = document.getElementById('sidebar-toggle');
+  sb.classList.toggle('hidden', !sidebarOpen);
+  btn.textContent = sidebarOpen ? '‹' : '›';
+  btn.classList.toggle('collapsed', !sidebarOpen);
+  btn.style.left = sidebarOpen ? '278px' : '10px';
+}
+
+// ── Location list ──
+const locList = document.getElementById('loc-list');
+locations.forEach(loc => {
+  const el = document.createElement('div');
+  el.className = 'loc-item';
+  el.innerHTML = `<div class="loc-dot" style="background:${loc.dot}"></div><span class="loc-name">${loc.name}</span><span class="loc-depth">${loc.depth}</span>`;
+  el.onclick = () => {
+    document.getElementById('info-name').textContent  = loc.name;
+    document.getElementById('info-desc').textContent  = loc.desc;
+    document.getElementById('info-depth').textContent = loc.depth;
+    document.getElementById('info-area').textContent  = loc.area;
+    document.getElementById('info-cat').textContent   = loc.cat;
+    if (viewer) flyTo(loc.lat, loc.lon, loc.alt, loc.pitch);
+  };
+  locList.appendChild(el);
+});
+
+// ── Auto-load saved token ──
+// Always show token notice on fresh load - remove saved check for reliability
+const saved = null; // localStorage.getItem('cesium_token');
+if (saved) {
+  document.getElementById('token-notice').style.display = 'none';
+  initCesium(saved);
+}
+</script>
+</body>
+</html>
